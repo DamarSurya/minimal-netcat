@@ -1,3 +1,4 @@
+#include <asm-generic/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <strings.h>
@@ -17,11 +18,10 @@ enum {
     SENDING_MODE, // sending mode
     LISTEN_MODE     // listen mode
 };
-               
-
 void WriteError(const char* buffer) {
     write(STDERR_FILENO, buffer, strlen(buffer));
 }
+
 
 int main(int argc, char** argv) {
     const char* argsMessage = "\tSending Mode: [ip] [port] [buffer] (buffer = str or < file)\n\tListen Mode: -l [port]\n\t[-a ip port]:\tlisten at specific ip\n";
@@ -36,6 +36,8 @@ int main(int argc, char** argv) {
     int port;
     int af = AF_INET;
     int SOCK_TYPE = SOCK_STREAM;
+    // socket opt
+    int enableREUSEADDR = 1;
     
     int opt, optCounter = 1;
     const char* opts = "la";
@@ -74,6 +76,7 @@ int main(int argc, char** argv) {
             WriteError("\t[Error]: Not enough args\n\tSending Mode: [ip port]\n");
             return 1;
         }
+
         char* defaultMessage = "[Default message]: Hola listener\n";
         address = argv[1];
         port = atoi(argv[2]);
@@ -141,7 +144,7 @@ int main(int argc, char** argv) {
         localSockAddr.sin_addr = localAddr;
         localSockAddr.sin_family = af;
         localSockAddr.sin_port = htons(port);
-
+        setsockopt(localFd, SOL_SOCKET, SO_REUSEADDR, &enableREUSEADDR, sizeof(enableREUSEADDR));
         localSockSize = sizeof(localSockAddr);
 
         if (bind(localFd, (struct sockaddr*)&localSockAddr, localSockSize) == -1) {

@@ -1,1 +1,1 @@
-Minimal netcat implementation in c for unix devices. Not optimize yet.
+Minimal netcat implementation in c. Only works for unix devices.
