@@ -1,180 +1,191 @@
-#include <asm-generic/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <strings.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include <asm-generic/socket.h>
+#include <bits/getopt_core.h>
+#include <netinet/in.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
-#define REDIR_STDIN 0 // redirected stdin
+#define LogInfo(v)                                                             \
+    do {                                                                       \
+        fprintf(stdout, "[INFO]: %s\n", v);                                    \
+    } while (0);
+#define LogError(v)                                                            \
+    do {                                                                       \
+        fprintf(stderr, "%s", v);                                              \
+    } while (0);
+#define SysErr(err)                                                            \
+    do {                                                                       \
+        perror(err);                                                           \
+        exit(-1);                                                              \
+    } while (0);
+
+#define REDIR_STDIN 0  // redirected stdin
 #define REDIR_STDOUT 0 // reedirected stdout
 #define MAX_BACKLOG 10 // max backlog
-#define MAXBUF 4096 // max in buffer size/stored buffer
-#define MAX_OPT 2 // maximum option count
+#define MAXBUF 4096    // max in buffer size/stored buffer
 
 enum {
     SENDING_MODE, // sending mode
-    LISTEN_MODE     // listen mode
+    LISTEN_MODE   // listen mode
 };
-void WriteError(const char* buffer) {
-    write(STDERR_FILENO, buffer, strlen(buffer));
+
+int MODE = SENDING_MODE;
+int REPEATER = false;
+
+const int SOCK_TYPE = SOCK_STREAM;
+const int DEFAULT_PORT = 3000;
+const int enableREUSEADDR = 1;
+const int DOMAIN = AF_INET;
+
+bool IP_IS_SET = false;
+bool PORT_IS_SET = false;
+// socket opt
+
+int LOCAL_PORT;
+char *LOCAL_ADDRESS_CHAR;
+struct in_addr LOCAL_ADDRESS;
+
+void SendLines(int socket, FILE *stream) {
+    char *line = NULL;
+    ssize_t read = 0;
+    size_t alloc;
+    while ((read = getline(&line, &alloc, stream)) != -1) {
+        ssize_t bytesSent = 0;
+        ssize_t readCopy = read;
+        while ((bytesSent = send(socket, line, read, 0))) {
+            read -= bytesSent;
+            if (read <= 0)
+                break;
+            if (bytesSent == -1)
+                SysErr("send");
+        }
+        bzero(line, readCopy);
+    }
+}
+int CreateSocket(int domain, int type, int proto) {
+    int ec;
+    if ((ec = socket(domain, type, proto)) == -1)
+        SysErr("socket");
+    return ec;
 }
 
-
-int main(int argc, char** argv) {
-    const char* argsMessage = "\tSending Mode: [ip] [port] [buffer] (buffer = str or < file)\n\tListen Mode: -l [port]\n\t[-a ip port]:\tlisten at specific ip\n";
+int main(int argc, char **argv) {
+    const char *USAGE_MESSAGE =
+        "Usage:\t nc [-l (listen mode) ] [ [ip] [port] (sending mode) ] \n\tOptions:\n\
+    \t\t-l: \tSet to listen mode\n\
+    \t\t-p: \tSet port\n\
+    \t\t-i: \tSet ip\n\
+    \t\t-r: \tLooped listen mode\n\
+    \tRedirection: nc [-l > out] [ 0.0.0.0 3100 < in]\n";
     if (argc <= 1) {
-        WriteError("\t[ERROR]: Not enugh args\n\tArgs:\n");
-        WriteError(argsMessage);
+        LogError(USAGE_MESSAGE);
         return 1;
     }
-       
-    int MODE = SENDING_MODE;
-    char *address;
-    int port;
-    int af = AF_INET;
-    int SOCK_TYPE = SOCK_STREAM;
-    // socket opt
-    int enableREUSEADDR = 1;
-    
-    int opt, optCounter = 1;
-    const char* opts = "la";
-    while ((opt = getopt(argc, argv, opts)) != -1) {
-        switch (opt) {
-            case 'l':
-                if ((argc-1) - optCounter == 0) {
-                    WriteError("\t[Error]: Not enough arguments\n");
-                    WriteError(argsMessage);
-                    return -1;
-                }
-                if (strcmp(argv[optCounter+1], "-a") == 0) {
-                    if ((argc-optCounter)-1 != 3) {
-                        WriteError("\t[Error]: Invalid arguments\n");
-                        WriteError(argsMessage);
-                        return -1;
-                    }
-                    address = argv[optCounter+2];
-                    port = atoi(argv[optCounter+3]);
-                } else {
-                    address = "0.0.0.0";
-                    port = atoi(argv[optCounter+1]);
-                }
-                MODE = LISTEN_MODE;
-                
-                break;
-            default:
-                break;
+    opterr = 0;
+    int opt;
+    while ((opt = getopt(argc, argv, "lh")) != -1) {
+        if (opt == 'h') {
+            fprintf(stderr, "%s", USAGE_MESSAGE);
+            exit(1);
         }
-        
-        ++optCounter;
+        if (opt == 'l') {
+            MODE = LISTEN_MODE;
+            int opt = 0;
+            while ((opt = getopt(argc, argv, "ri:p:")) != -1) {
+                if (opt == 'r') {
+                    REPEATER = true;
+                }
+                if (opt == 'i') {
+                    if (inet_pton(DOMAIN, optarg, &LOCAL_ADDRESS) == -1)
+                        SysErr("inet_pton");
+                    LOCAL_ADDRESS_CHAR = optarg;
+                    IP_IS_SET = true;
+                }
+                if (opt == 'p') {
+                    LOCAL_PORT = atoi(optarg);
+                    PORT_IS_SET = true;
+                }
+            }
+        }
     }
-    
+
     if (MODE == SENDING_MODE) {
         if (argc < 3) {
-            WriteError("\t[Error]: Not enough args\n\tSending Mode: [ip port]\n");
+            LogError(USAGE_MESSAGE);
             return 1;
         }
-
-        char* defaultMessage = "[Default message]: Hola listener\n";
-        address = argv[1];
-        port = atoi(argv[2]);
+        LOCAL_ADDRESS_CHAR = argv[1];
+        LOCAL_PORT = atoi(argv[2]);
         int fd;
         struct in_addr addr;
         struct sockaddr_in sockAddr;
-    
-        if (inet_pton(af, address, &addr) == -1) {
-            perror("inet_pton");
-            exit(-1);
-        }
-        if ((fd = socket(af, SOCK_TYPE, 0)) == -1) {
-            perror("socket");
-            exit(-1);
-        }
+        fd = CreateSocket(DOMAIN, SOCK_TYPE, 0);
+
+        if (inet_pton(DOMAIN, LOCAL_ADDRESS_CHAR, &addr) == -1)
+            SysErr("inet_pton");
         sockAddr.sin_addr = addr;
-        sockAddr.sin_family = af;
-        sockAddr.sin_port = htons(port);
-          
-        if (connect(fd, (struct sockaddr*)&sockAddr, sizeof(sockAddr)) == -1) {
-            perror("connect");
-            exit(-1);
-        }
-
-        char *buffer = NULL;
+        sockAddr.sin_family = DOMAIN;
+        sockAddr.sin_port = htons(LOCAL_PORT);
+        if (connect(fd, (struct sockaddr *)&sockAddr, sizeof(sockAddr)) == -1)
+            SysErr("connect");
         if (isatty(STDIN_FILENO) == REDIR_STDIN) {
-            size_t allocatedSize = 0;
-            ssize_t readSize;
-
-            while((readSize = getline(&buffer, &allocatedSize, stdin)) != -1)  {
-                if (send(fd, buffer, readSize, 0) == -1) {
-                    perror("send");
-                    exit(-1);
-                }
-            }
-        } else {
-            if (argc >= 4) {
-                buffer = argv[3];    
-            } else {
-               buffer = defaultMessage;
-            }
-
-            if (send(fd, buffer, strlen(buffer), 0) == -1) {
-                perror("send");
-                exit(-1);
-            }
+            SendLines(fd, stdin);
+            shutdown(fd, SHUT_WR);
         }
-        
-        shutdown(fd, SHUT_WR);
         close(fd);
-    } else if(MODE == LISTEN_MODE) {
-        int localFd, peerFd;
-        struct in_addr localAddr;
-        struct sockaddr_in localSockAddr, peerSockAddr;
-        socklen_t localSockSize, peerSockSize;
+    } else if (MODE == LISTEN_MODE) {
+        if (!IP_IS_SET) {
+            LOCAL_ADDRESS_CHAR = "0.0.0.0";
+            LOCAL_ADDRESS.s_addr = htonl(INADDR_ANY);
+        }
+        if (!PORT_IS_SET) {
+            LOCAL_PORT = DEFAULT_PORT;
+        }
+        int localFd;
+        struct sockaddr_in localSockAddr;
+        socklen_t localSockSize;
+        localFd = CreateSocket(DOMAIN, SOCK_TYPE, 0);
 
-        if ((localFd = socket(af, SOCK_STREAM, 0)) == -1) {
-            perror("socket");
-            exit(-1);
-        }
-        if (inet_pton(af, address, &localAddr) == -1) {
-            perror("inet_pton");
-            exit(-1);
-        }
-        localSockAddr.sin_addr = localAddr;
-        localSockAddr.sin_family = af;
-        localSockAddr.sin_port = htons(port);
-        setsockopt(localFd, SOL_SOCKET, SO_REUSEADDR, &enableREUSEADDR, sizeof(enableREUSEADDR));
+        localSockAddr.sin_addr = LOCAL_ADDRESS;
+        localSockAddr.sin_family = DOMAIN;
+        localSockAddr.sin_port = htons(LOCAL_PORT);
+
+        setsockopt(localFd, SOL_SOCKET, SO_REUSEADDR, &enableREUSEADDR,
+                   sizeof(enableREUSEADDR));
         localSockSize = sizeof(localSockAddr);
 
-        if (bind(localFd, (struct sockaddr*)&localSockAddr, localSockSize) == -1) {
-            perror("bind");
-            exit(-1);
+        if (bind(localFd, (struct sockaddr *)&localSockAddr, localSockSize) ==
+            -1) {
+            SysErr("bind");
         }
         if (listen(localFd, MAX_BACKLOG) == -1) {
-            perror("listen");
-            exit(-1);
+            SysErr("listen");
         }
-        if ((peerFd = accept(localFd, (struct sockaddr*)&peerSockAddr, &peerSockSize)) == -1) {
-            perror("accept");
-            exit(-1);
-        }
-
-        char buffer[MAXBUF];
-        ssize_t receive = 0;
-        ssize_t totalReceive = 0;
-        while ((receive = recv(peerFd, buffer, MAXBUF, 0)) > 0) {
-            totalReceive += receive;
-            if (isatty(STDOUT_FILENO) == REDIR_STDOUT) {
-                write(STDOUT_FILENO, buffer, receive);
-            } else {
-                printf("%s", buffer);
+        while (1) {
+            int peerFd;
+            if ((peerFd = accept(localFd, NULL, NULL)) == -1) {
+                SysErr("accept");
             }
-            bzero(buffer, receive);
+            char inbuf[MAXBUF];
+            ssize_t receive = 0;
+            while ((receive = recv(peerFd, inbuf, MAXBUF, 0))) {
+                if (receive == -1)
+                    SysErr("recv");
+                fprintf(stdout, "%s", inbuf);
+                bzero(inbuf, receive);
+            }
+            shutdown(peerFd, SHUT_RD);
+            close(peerFd);
+            if (!REPEATER) {
+                break;
+            }
+            close(peerFd);
         }
-
-        shutdown(localFd, SHUT_RD);
-        close(peerFd);
         close(localFd);
     }
     return 0;
