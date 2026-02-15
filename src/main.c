@@ -76,7 +76,7 @@ int CreateSocket(int domain, int type, int proto) {
 
 int main(int argc, char **argv) {
     const char *USAGE_MESSAGE =
-        "Usage:\t nc [-l (listen mode) ] [ [ip] [port] (sending mode) ] \n\tOptions:\n\
+        "Usage:\t ./main [-l (listen mode) ] [ [ip] [port] (sending mode) ] \n\tOptions:\n\
     \t\t-l: \tSet to listen mode\n\
     \t\t-p: \tSet port\n\
     \t\t-i: \tSet ip\n\
