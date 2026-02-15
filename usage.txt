@@ -1,4 +1,4 @@
-    Usage: nc [-l (listen mode) ] [ [ip] [port] (sending mode) ]
+    Usage: ./[program] [-l (listen mode) ] [ [ip] [port] (sending mode) ]
         Options:
             -l: Set to listen mode
             -p: Set port
