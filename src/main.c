@@ -1,6 +1,4 @@
 #include <arpa/inet.h>
-#include <asm-generic/socket.h>
-#include <bits/getopt_core.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdio.h>
