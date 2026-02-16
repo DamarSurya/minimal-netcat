@@ -4,5 +4,5 @@
             -p: Set port
             -i: Set ip
             -r: tLooped listen mode
-        Redirection: nc [-l > out] [ 0.0.0.0 3100 < in]
+        Redirection: ./[program] [-l > out] [ 0.0.0.0 3100 < in]
 

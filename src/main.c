@@ -26,7 +26,7 @@
 
 #define REDIR_STDIN 0  // redirected stdin
 #define REDIR_STDOUT 0 // reedirected stdout
-#define MAX_BACKLOG 10 // max backlog
+#define MAX_BACKLOG 1  // max backlog
 #define MAXBUF 4096    // max in buffer size/stored buffer
 
 enum {
@@ -39,12 +39,11 @@ int REPEATER = false;
 
 const int SOCK_TYPE = SOCK_STREAM;
 const int DEFAULT_PORT = 3000;
-const int enableREUSEADDR = 1;
 const int DOMAIN = AF_INET;
+const int enableREUSEADDR = 1;
 
 bool IP_IS_SET = false;
 bool PORT_IS_SET = false;
-// socket opt
 
 int LOCAL_PORT;
 char *LOCAL_ADDRESS_CHAR;
@@ -76,12 +75,12 @@ int CreateSocket(int domain, int type, int proto) {
 
 int main(int argc, char **argv) {
     const char *USAGE_MESSAGE =
-        "Usage:\t ./main [-l (listen mode) ] [ [ip] [port] (sending mode) ] \n\tOptions:\n\
+        "Usage:\t ./[program] [-l (listen mode) ] [ [ip] [port] (sending mode) ] \n\tOptions:\n\
     \t\t-l: \tSet to listen mode\n\
     \t\t-p: \tSet port\n\
     \t\t-i: \tSet ip\n\
     \t\t-r: \tLooped listen mode\n\
-    \tRedirection: nc [-l > out] [ 0.0.0.0 3100 < in]\n";
+    \tRedirection: ./[program] [-l > out] [ 0.0.0.0 3100 < in]\n";
     if (argc <= 1) {
         LogError(USAGE_MESSAGE);
         return 1;
@@ -89,28 +88,35 @@ int main(int argc, char **argv) {
     opterr = 0;
     int opt;
     while ((opt = getopt(argc, argv, "lh")) != -1) {
-        if (opt == 'h') {
+        switch (opt) {
+        case 'h':
             fprintf(stderr, "%s", USAGE_MESSAGE);
             exit(1);
-        }
-        if (opt == 'l') {
+            break;
+        case 'l':
             MODE = LISTEN_MODE;
-            int opt = 0;
             while ((opt = getopt(argc, argv, "ri:p:")) != -1) {
-                if (opt == 'r') {
+                switch (opt) {
+                case 'r':
                     REPEATER = true;
-                }
-                if (opt == 'i') {
+                    break;
+                case 'i':
                     if (inet_pton(DOMAIN, optarg, &LOCAL_ADDRESS) == -1)
                         SysErr("inet_pton");
                     LOCAL_ADDRESS_CHAR = optarg;
                     IP_IS_SET = true;
-                }
-                if (opt == 'p') {
+                    break;
+                case 'p':
                     LOCAL_PORT = atoi(optarg);
                     PORT_IS_SET = true;
+                    break;
+                default:
+                    break;
                 }
             }
+            break;
+        default:
+            break;
         }
     }
 
