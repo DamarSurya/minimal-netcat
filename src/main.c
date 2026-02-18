@@ -8,6 +8,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+
+// debug
+#define DEBUG_MODE 1
+
+
 #define LogInfo(v)                                                             \
     do {                                                                       \
         fprintf(stdout, "[INFO]: %s\n", v);                                    \
@@ -48,21 +53,23 @@ char *LOCAL_ADDRESS_CHAR;
 struct in_addr LOCAL_ADDRESS;
 
 void SendLines(int socket, FILE *stream) {
-    char *line = NULL;
-    ssize_t read = 0;
-    size_t alloc;
-    while ((read = getline(&line, &alloc, stream)) != -1) {
-        ssize_t bytesSent = 0;
-        ssize_t readCopy = read;
+    char line[MAXBUF];
+    ssize_t bytesSent;
+    ssize_t totalSent, totalRead;
+    while (fgets(line, MAXBUF, stream) != NULL) {
+        bytesSent = 0;
+        ssize_t read = strlen(line);
+        totalRead += read;
         while ((bytesSent = send(socket, line, read, 0))) {
+        totalSent += bytesSent;
             read -= bytesSent;
             if (read <= 0)
                 break;
             if (bytesSent == -1)
                 SysErr("send");
         }
-        bzero(line, readCopy);
-    }
+    } 
+    if (DEBUG_MODE) printf("Total read: %lu, Total sent: %lu\n", totalRead, totalSent);
 }
 int CreateSocket(int domain, int type, int proto) {
     int ec;
@@ -141,7 +148,6 @@ int main(int argc, char **argv) {
             SendLines(fd, stdin);
             shutdown(fd, SHUT_WR);
         }
-        close(fd);
     } else if (MODE == LISTEN_MODE) {
         if (!IP_IS_SET) {
             LOCAL_ADDRESS_CHAR = "0.0.0.0";
@@ -176,15 +182,20 @@ int main(int argc, char **argv) {
                 SysErr("accept");
             }
             char inbuf[MAXBUF];
-            ssize_t receive = 0;
+            ssize_t receive = 0, totalReceive = 0;
+
             while ((receive = recv(peerFd, inbuf, MAXBUF, 0))) {
                 if (receive == -1)
                     SysErr("recv");
                 fprintf(stdout, "%s", inbuf);
+                totalReceive += receive;
                 bzero(inbuf, receive);
             }
             shutdown(peerFd, SHUT_RD);
             close(peerFd);
+            fflush(stdout);
+
+            if (DEBUG_MODE) printf("Total receive: %lu\n", totalReceive);
             if (!REPEATER) {
                 break;
             }
