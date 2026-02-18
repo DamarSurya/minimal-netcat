@@ -8,11 +8,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-
-// debug
-#define DEBUG_MODE 1
-
-
 #define LogInfo(v)                                                             \
     do {                                                                       \
         fprintf(stdout, "[INFO]: %s\n", v);                                    \
@@ -27,10 +22,18 @@
         exit(-1);                                                              \
     } while (0);
 
-#define REDIR_STDIN 0  // redirected stdin
-#define REDIR_STDOUT 0 // reedirected stdout
-#define MAX_BACKLOG 1  // max backlog
-#define MAXBUF 4096    // max in buffer size/stored buffer
+#define REDIR_STDIN 0             // redirected stdin
+#define REDIR_STDOUT 0            // reedirected stdout
+#define MAX_BACKLOG 1             // max backlog
+#define MAXBUF 4096 // max in buffer size/stored buffer
+                
+#define DEFAULT_ADDRESS "0.0.0.0" // default addresss
+#define SOCK_TYPE SOCK_STREAM     // default socket type
+#define DEFAULT_PORT 3000         // default port
+#define DOMAIN AF_INET            // default value for socket domain/family
+
+// socket opt
+const int enableREUSEADDR = 1;
 
 enum {
     SENDING_MODE, // sending mode
@@ -38,45 +41,32 @@ enum {
 };
 
 int MODE = SENDING_MODE;
-int REPEATER = false;
-
-const int SOCK_TYPE = SOCK_STREAM;
-const int DEFAULT_PORT = 3000;
-const int DOMAIN = AF_INET;
-const int enableREUSEADDR = 1;
-
+int LISTEN_LOOPED = false;
 bool IP_IS_SET = false;
 bool PORT_IS_SET = false;
 
-int LOCAL_PORT;
-char *LOCAL_ADDRESS_CHAR;
-struct in_addr LOCAL_ADDRESS;
+struct in_addr inAddr;
+struct sockaddr_in sockAddr;
+char *addressStr;
+int port;
 
-void SendLines(int socket, FILE *stream) {
-    char line[MAXBUF];
-    ssize_t bytesSent;
-    ssize_t totalSent, totalRead;
-    while (fgets(line, MAXBUF, stream) != NULL) {
-        bytesSent = 0;
-        ssize_t read = strlen(line);
-        totalRead += read;
-        while ((bytesSent = send(socket, line, read, 0))) {
-        totalSent += bytesSent;
-            read -= bytesSent;
-            if (read <= 0)
-                break;
-            if (bytesSent == -1)
-                SysErr("send");
-        }
-    } 
-    if (DEBUG_MODE) printf("Total read: %lu, Total sent: %lu\n", totalRead, totalSent);
-}
 int CreateSocket(int domain, int type, int proto) {
     int ec;
     if ((ec = socket(domain, type, proto)) == -1)
         SysErr("socket");
     return ec;
 }
+
+// send data from FILE* stream
+// return total sent bytes
+// auto exit on error via SysErr
+ssize_t SendFile(int socket, FILE *stream, int flags);
+
+// return total bytes received
+// auto write to stdout
+// flush the stdout buffer after receive
+// auto exit on error via SysErr
+ssize_t Recv(int socket, int flags);
 
 int main(int argc, char **argv) {
     const char *USAGE_MESSAGE =
@@ -103,16 +93,14 @@ int main(int argc, char **argv) {
             while ((opt = getopt(argc, argv, "ri:p:")) != -1) {
                 switch (opt) {
                 case 'r':
-                    REPEATER = true;
+                    LISTEN_LOOPED = true;
                     break;
                 case 'i':
-                    if (inet_pton(DOMAIN, optarg, &LOCAL_ADDRESS) == -1)
-                        SysErr("inet_pton");
-                    LOCAL_ADDRESS_CHAR = optarg;
+                    addressStr = optarg;
                     IP_IS_SET = true;
                     break;
                 case 'p':
-                    LOCAL_PORT = atoi(optarg);
+                    port = atoi(optarg);
                     PORT_IS_SET = true;
                     break;
                 default:
@@ -124,84 +112,101 @@ int main(int argc, char **argv) {
             break;
         }
     }
-
     if (MODE == SENDING_MODE) {
         if (argc < 3) {
             LogError(USAGE_MESSAGE);
             return 1;
         }
-        LOCAL_ADDRESS_CHAR = argv[1];
-        LOCAL_PORT = atoi(argv[2]);
-        int fd;
-        struct in_addr addr;
-        struct sockaddr_in sockAddr;
-        fd = CreateSocket(DOMAIN, SOCK_TYPE, 0);
+        addressStr = argv[1];
+        port = atoi(argv[2]);
 
-        if (inet_pton(DOMAIN, LOCAL_ADDRESS_CHAR, &addr) == -1)
-            SysErr("inet_pton");
-        sockAddr.sin_addr = addr;
-        sockAddr.sin_family = DOMAIN;
-        sockAddr.sin_port = htons(LOCAL_PORT);
-        if (connect(fd, (struct sockaddr *)&sockAddr, sizeof(sockAddr)) == -1)
+    } else if (MODE == LISTEN_MODE) {
+        if (!IP_IS_SET)
+            addressStr = DEFAULT_ADDRESS;
+        if (!PORT_IS_SET)
+            port = DEFAULT_PORT;
+    }
+    // initialize inAddr and assign value to sockAddr
+    if (inet_pton(DOMAIN, addressStr, &inAddr) == -1)
+        SysErr("inet_pton");
+    sockAddr.sin_addr = inAddr;
+    sockAddr.sin_family = DOMAIN;
+    sockAddr.sin_port = htons(port);
+    if (MODE == SENDING_MODE) {
+        int socket;
+        socket = CreateSocket(DOMAIN, SOCK_TYPE, 0);
+
+        if (connect(socket, (struct sockaddr *)&sockAddr, sizeof(sockAddr)) ==
+            -1)
             SysErr("connect");
         if (isatty(STDIN_FILENO) == REDIR_STDIN) {
-            SendLines(fd, stdin);
-            shutdown(fd, SHUT_WR);
+            ssize_t totalSent = SendFile(socket, stdin, 0);
+            shutdown(socket, SHUT_WR);
         }
+        close(socket);
     } else if (MODE == LISTEN_MODE) {
-        if (!IP_IS_SET) {
-            LOCAL_ADDRESS_CHAR = "0.0.0.0";
-            LOCAL_ADDRESS.s_addr = htonl(INADDR_ANY);
-        }
-        if (!PORT_IS_SET) {
-            LOCAL_PORT = DEFAULT_PORT;
-        }
-        int localFd;
-        struct sockaddr_in localSockAddr;
+        int localSocket;
         socklen_t localSockSize;
-        localFd = CreateSocket(DOMAIN, SOCK_TYPE, 0);
-
-        localSockAddr.sin_addr = LOCAL_ADDRESS;
-        localSockAddr.sin_family = DOMAIN;
-        localSockAddr.sin_port = htons(LOCAL_PORT);
-
-        setsockopt(localFd, SOL_SOCKET, SO_REUSEADDR, &enableREUSEADDR,
+        localSocket = CreateSocket(DOMAIN, SOCK_TYPE, 0);
+        localSockSize = sizeof(sockAddr);
+        setsockopt(localSocket, SOL_SOCKET, SO_REUSEADDR, &enableREUSEADDR,
                    sizeof(enableREUSEADDR));
-        localSockSize = sizeof(localSockAddr);
 
-        if (bind(localFd, (struct sockaddr *)&localSockAddr, localSockSize) ==
+        if (bind(localSocket, (struct sockaddr *)&sockAddr, localSockSize) ==
             -1) {
             SysErr("bind");
         }
-        if (listen(localFd, MAX_BACKLOG) == -1) {
+        if (listen(localSocket, MAX_BACKLOG) == -1) {
             SysErr("listen");
         }
         while (1) {
-            int peerFd;
-            if ((peerFd = accept(localFd, NULL, NULL)) == -1) {
+            int peerSocket;
+            if ((peerSocket = accept(localSocket, NULL, NULL)) == -1) {
                 SysErr("accept");
             }
-            char inbuf[MAXBUF];
-            ssize_t receive = 0, totalReceive = 0;
-
-            while ((receive = recv(peerFd, inbuf, MAXBUF, 0))) {
-                if (receive == -1)
-                    SysErr("recv");
-                fprintf(stdout, "%s", inbuf);
-                totalReceive += receive;
-                bzero(inbuf, receive);
-            }
-            shutdown(peerFd, SHUT_RD);
-            close(peerFd);
-            fflush(stdout);
-
-            if (DEBUG_MODE) printf("Total receive: %lu\n", totalReceive);
-            if (!REPEATER) {
+            ssize_t totalReceived = Recv(peerSocket, 0);
+            shutdown(peerSocket, SHUT_RD);
+            close(peerSocket);
+            if (!LISTEN_LOOPED) {
                 break;
             }
-            close(peerFd);
         }
-        close(localFd);
+        close(localSocket);
     }
     return 0;
+}
+
+ssize_t SendFile(int socket, FILE *stream, int flags) {
+    char buffer[MAXBUF];
+    ssize_t bytesSent;
+    ssize_t totalSent, totalRead;
+    while (fgets(buffer, MAXBUF, stream) != NULL) {
+        bytesSent = 0;
+        ssize_t nread = strlen(buffer);
+        totalRead += nread;
+        while ((bytesSent = send(socket, buffer, nread, flags))) {
+            totalSent += bytesSent;
+            nread -= bytesSent;
+            if (nread <= 0)
+                break;
+            if (bytesSent == -1)
+                SysErr("send");
+        }
+        bzero(buffer, strlen(buffer));
+    }
+    return totalSent;
+}
+
+ssize_t Recv(int socket, int flags) {
+    char buffer[MAXBUF];
+    ssize_t received = 0, totalReceived = 0;
+    while ((received = recv(socket, buffer, MAXBUF, flags))) {
+        if (received == -1)
+            SysErr("recv");
+        fprintf(stdout, "%s", buffer);
+        totalReceived += received;
+        bzero(buffer, received);
+    }
+    fflush(stdout); // flush stdout buffer
+    return totalReceived;
 }
