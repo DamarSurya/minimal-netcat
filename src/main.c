@@ -1,3 +1,5 @@
+// no ipv6
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -60,13 +62,12 @@ int CreateSocket(int domain, int type, int proto) {
 // send data from FILE* stream
 // return total sent bytes
 // auto exit on error via SysErr
-ssize_t SendFile(int socket, FILE *stream, int flags);
+ssize_t SendFile(int socket, size_t size, FILE *stream, int flags);
 
 // return total bytes received
 // auto write to stdout
-// flush the stdout buffer after receive
 // auto exit on error via SysErr
-ssize_t Recv(int socket, int flags);
+ssize_t Recv(int socket, size_t size, int flags);
 
 int main(int argc, char **argv) {
     const char *USAGE_MESSAGE =
@@ -140,7 +141,7 @@ int main(int argc, char **argv) {
             -1)
             SysErr("connect");
         if (isatty(STDIN_FILENO) == REDIR_STDIN) {
-            ssize_t totalSent = SendFile(socket, stdin, 0);
+            ssize_t totalSent = SendFile(socket, MAXBUF, stdin, 0);
             shutdown(socket, SHUT_WR);
         }
         close(socket);
@@ -149,8 +150,8 @@ int main(int argc, char **argv) {
         socklen_t localSockSize;
         localSocket = CreateSocket(DOMAIN, SOCK_TYPE, 0);
         localSockSize = sizeof(sockAddr);
-        setsockopt(localSocket, SOL_SOCKET, SO_REUSEADDR, &enableREUSEADDR,
-                   sizeof(enableREUSEADDR));
+        if (setsockopt(localSocket, SOL_SOCKET, SO_REUSEADDR, &enableREUSEADDR,
+                   sizeof(enableREUSEADDR)) == -1) SysErr("setsockopt");
 
         if (bind(localSocket, (struct sockaddr *)&sockAddr, localSockSize) ==
             -1) {
@@ -164,7 +165,7 @@ int main(int argc, char **argv) {
             if ((peerSocket = accept(localSocket, NULL, NULL)) == -1) {
                 SysErr("accept");
             }
-            ssize_t totalReceived = Recv(peerSocket, 0);
+            ssize_t totalReceived = Recv(peerSocket, MAXBUF, 0);
             shutdown(peerSocket, SHUT_RD);
             close(peerSocket);
             if (!LISTEN_LOOPED) {
@@ -175,32 +176,28 @@ int main(int argc, char **argv) {
     }
     return 0;
 }
-
-ssize_t SendFile(int socket, FILE *stream, int flags) {
-    char buffer[MAXBUF];
-    ssize_t bytesSent;
-    ssize_t totalSent, totalRead;
-    while (fgets(buffer, MAXBUF, stream) != NULL) {
-        bytesSent = 0;
-        ssize_t nread = strlen(buffer);
+ssize_t SendFile(int socket, size_t size, FILE *stream, int flags) {
+    char buffer[size];
+    ssize_t totalSent = 0;
+    size_t nread = 0, totalRead = 0;
+    while ((nread = fread(buffer, 1, sizeof(buffer), stream)) > 0) {
         totalRead += nread;
-        while ((bytesSent = send(socket, buffer, nread, flags))) {
-            totalSent += bytesSent;
-            nread -= bytesSent;
-            if (nread <= 0)
-                break;
-            if (bytesSent == -1)
-                SysErr("send");
+        char* ptr = buffer;
+        while (nread > 0) {
+            ssize_t len = send(socket, ptr, nread, 0);
+            if (len == -1) SysErr("send");
+            ptr += len;
+            nread -= len;
+            totalSent += len;
         }
-        bzero(buffer, strlen(buffer));
     }
     return totalSent;
 }
 
-ssize_t Recv(int socket, int flags) {
-    char buffer[MAXBUF];
+ssize_t Recv(int socket, size_t size, int flags) {
+    char buffer[size];
     ssize_t received = 0, totalReceived = 0;
-    while ((received = recv(socket, buffer, MAXBUF, flags))) {
+    while ((received = recv(socket, buffer, size, flags)) > 0) {
         if (received == -1)
             SysErr("recv");
         fprintf(stdout, "%s", buffer);
