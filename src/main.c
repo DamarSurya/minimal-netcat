@@ -141,7 +141,7 @@ int main(int argc, char **argv) {
             -1)
             SysErr("connect");
         if (isatty(STDIN_FILENO) == REDIR_STDIN) {
-            ssize_t totalSent = SendFile(socket, MAXBUF, stdin, 0);
+            SendFile(socket, MAXBUF, stdin, 0);
             shutdown(socket, SHUT_WR);
         }
         close(socket);
@@ -165,7 +165,7 @@ int main(int argc, char **argv) {
             if ((peerSocket = accept(localSocket, NULL, NULL)) == -1) {
                 SysErr("accept");
             }
-            ssize_t totalReceived = Recv(peerSocket, MAXBUF, 0);
+            Recv(peerSocket, MAXBUF, 0);
             shutdown(peerSocket, SHUT_RD);
             close(peerSocket);
             if (!LISTEN_LOOPED) {
@@ -179,12 +179,12 @@ int main(int argc, char **argv) {
 ssize_t SendFile(int socket, size_t size, FILE *stream, int flags) {
     char buffer[size];
     ssize_t totalSent = 0;
-    size_t nread = 0, totalRead = 0;
+    size_t nread = 0;
+    memset(buffer, '\0', sizeof(buffer));
     while ((nread = fread(buffer, 1, sizeof(buffer), stream)) > 0) {
-        totalRead += nread;
         char* ptr = buffer;
         while (nread > 0) {
-            ssize_t len = send(socket, ptr, nread, 0);
+            ssize_t len = send(socket, ptr, nread, flags);
             if (len == -1) SysErr("send");
             ptr += len;
             nread -= len;
@@ -197,6 +197,7 @@ ssize_t SendFile(int socket, size_t size, FILE *stream, int flags) {
 ssize_t Recv(int socket, size_t size, int flags) {
     char buffer[size];
     ssize_t received = 0, totalReceived = 0;
+    memset(buffer, '\0', sizeof(buffer));
     while ((received = recv(socket, buffer, size, flags)) > 0) {
         if (received == -1)
             SysErr("recv");
