@@ -1,8 +1,0 @@
-    Usage: ./[program] [-l (listen mode) ] [ [ip] [port] (sending mode) ]
-        Options:
-            -l: Set to listen mode
-            -p: Set port
-            -i: Set ip
-            -r: Looped listen mode
-        Redirection: ./[program] [-l > out] [ 0.0.0.0 3100 < in]
-
