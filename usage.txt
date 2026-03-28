@@ -1,0 +1,11 @@
+Usage:	 ./[program] [-l (listen mode) ] [ [ip] [port] (sending mode) ]
+	Options:
+    		-v: 	Set verbose mode
+    		-l: 	Set to listen mode
+    		-p: 	Set port
+    		-i: 	Set ip
+    		-6: 	Enable ipv6
+    		-r: 	Looped listen mode
+    		-m: 	Set message
+    		-b: 	Set max_backlog or maximum connection
+    	Redirection: ./[program] [-l > out] [ [ip] [port] < in]
